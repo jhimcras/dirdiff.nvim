@@ -11,11 +11,12 @@ M.defaults = {
   ignore_files = { ".gitignore" },
   -- How "modified" is decided when a file exists on both sides. mtime alone
   -- never marks a file modified (it changes on copy/checkout); content is the
-  -- source of truth. The two options below are reserved: only byte-exact
-  -- comparison is implemented for now, so their values have no effect yet.
+  -- source of truth. Enabling either option below makes files whose byte size
+  -- differs only because of newlines/BOM get content-verified instead of being
+  -- assumed modified.
   compare = {
-    ignore_newline = false, -- (planned) treat CRLF/LF-only differences as identical
-    ignore_encoding = false, -- (planned) treat encoding/BOM-only differences as identical
+    ignore_newline = false, -- treat CRLF/CR/LF newline differences as identical
+    ignore_encoding = false, -- treat a leading BOM difference as identical (BOM strip only)
   },
   -- Sort/grouping of the result view.
   sort = {

@@ -110,7 +110,7 @@ local function compare(root_a, root_b)
     if snap_a and snap_b then
       -- Confirm same-size/different-mtime candidates by content before
       -- rendering; is_comparing is released once verification completes.
-      content.resolve(diff.compute(snap_a, snap_b), config.options.compare, function(entries)
+      content.resolve(diff.compute(snap_a, snap_b, config.options.compare), config.options.compare, function(entries)
         is_comparing = false
         last_entries = entries
         render_current(nil)

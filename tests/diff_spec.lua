@@ -68,4 +68,18 @@ describe("dirdiff.diff", function()
     assert.equals("/a/m.txt", by_rel["m.txt"].abs_a)
     assert.equals("/b/m.txt", by_rel["m.txt"].abs_b)
   end)
+
+  it("verifies size-differing pairs when a normalize option is enabled", function()
+    local a = { ["diff_size.txt"] = entry("diff_size.txt", 20, 100) }
+    local b = { ["diff_size.txt"] = entry("diff_size.txt", 15, 100) }
+
+    -- Without options, a size difference is a certain "modified" (never read).
+    assert.is_nil(diff.compute(a, b)[1].verify)
+
+    -- With ignore_newline, CRLF/BOM differences change byte size, so the pair
+    -- must be content-verified rather than assumed modified.
+    assert.is_true(diff.compute(a, b, { ignore_newline = true })[1].verify)
+    assert.is_true(diff.compute(a, b, { ignore_encoding = true })[1].verify)
+    assert.equals("modified", diff.compute(a, b, { ignore_newline = true })[1].status)
+  end)
 end)

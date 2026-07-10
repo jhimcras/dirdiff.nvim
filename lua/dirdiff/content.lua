@@ -17,11 +17,43 @@ local uv = vim.uv
 local MAX_SIZE = 20 * 1024 * 1024 -- 20 MiB; larger pairs are kept as modified
 local CONCURRENCY = 16
 
--- Byte comparison of two file contents. Extension point: when
--- compare_opts.ignore_newline / ignore_encoding are implemented, normalize a
--- and b here before comparing. For now only byte-exact comparison exists, so
--- the options have no effect.
-local function contents_equal(a, b, _compare_opts)
+local UTF8_BOM = "\239\187\191"
+local UTF16LE_BOM = "\255\254"
+local UTF16BE_BOM = "\254\255"
+
+-- Drop a leading byte-order mark. ignore_encoding only strips the BOM; it does
+-- not transcode between encodings (that is left to a future external tool).
+local function strip_bom(s)
+  if s:sub(1, 3) == UTF8_BOM then
+    return s:sub(4)
+  elseif s:sub(1, 2) == UTF16LE_BOM or s:sub(1, 2) == UTF16BE_BOM then
+    return s:sub(3)
+  end
+  return s
+end
+
+-- Normalize line endings to LF. CRLF is collapsed first so the trailing CR is
+-- not turned into an extra LF; any remaining lone CR (classic Mac) follows.
+local function normalize_newlines(s)
+  s = s:gsub("\r\n", "\n")
+  s = s:gsub("\r", "\n")
+  return s
+end
+
+-- Compare two file contents, honoring the compare options. When both options
+-- are off this is a plain byte-exact compare (the common fast path); otherwise
+-- both sides are normalized before comparing.
+local function contents_equal(a, b, compare_opts)
+  if not compare_opts
+    or (not compare_opts.ignore_newline and not compare_opts.ignore_encoding) then
+    return a == b
+  end
+  if compare_opts.ignore_encoding then
+    a, b = strip_bom(a), strip_bom(b)
+  end
+  if compare_opts.ignore_newline then
+    a, b = normalize_newlines(a), normalize_newlines(b)
+  end
   return a == b
 end
 

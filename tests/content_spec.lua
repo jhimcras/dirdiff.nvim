@@ -8,9 +8,9 @@ local function tmpfile(text)
   return p
 end
 
-local function resolve(entries)
+local function resolve(entries, opts)
   local out
-  content.resolve(entries, {}, function(r)
+  content.resolve(entries, opts or {}, function(r)
     out = r
   end)
   vim.wait(2000, function()
@@ -83,5 +83,43 @@ describe("dirdiff.content", function()
     assert.equals("b.txt", out[2].rel)
     assert.equals("equal", out[2].status)
     assert.equals("c.txt", out[3].rel)
+  end)
+
+  it("treats CRLF vs LF as equal only when ignore_newline is set", function()
+    local crlf = tmpfile("line1\r\nline2\r\n")
+    local lf = tmpfile("line1\nline2\n")
+    local entry = function()
+      return { rel = "x.txt", status = "modified", abs_a = crlf, abs_b = lf, verify = true }
+    end
+    assert.equals("modified", resolve({ entry() })[1].status)
+    assert.equals("equal", resolve({ entry() }, { ignore_newline = true })[1].status)
+  end)
+
+  it("treats a lone CR (classic Mac) vs LF as equal with ignore_newline", function()
+    local cr = tmpfile("a\rb")
+    local lf = tmpfile("a\nb")
+    local out = resolve({
+      { rel = "x.txt", status = "modified", abs_a = cr, abs_b = lf, verify = true },
+    }, { ignore_newline = true })
+    assert.equals("equal", out[1].status)
+  end)
+
+  it("treats a BOM difference as equal only when ignore_encoding is set", function()
+    local with_bom = tmpfile("\239\187\191hello")
+    local without = tmpfile("hello")
+    local entry = function()
+      return { rel = "x.txt", status = "modified", abs_a = with_bom, abs_b = without, verify = true }
+    end
+    assert.equals("modified", resolve({ entry() })[1].status)
+    assert.equals("equal", resolve({ entry() }, { ignore_encoding = true })[1].status)
+  end)
+
+  it("keeps genuinely different content as modified even with both options on", function()
+    local a = tmpfile("\239\187\191alpha\r\n")
+    local b = tmpfile("beta\n")
+    local out = resolve({
+      { rel = "x.txt", status = "modified", abs_a = a, abs_b = b, verify = true },
+    }, { ignore_newline = true, ignore_encoding = true })
+    assert.equals("modified", out[1].status)
   end)
 end)
