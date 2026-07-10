@@ -16,7 +16,7 @@ Neovim 0.10+ (uses `vim.uv`, `vim.fs.joinpath`)
 
 ```lua
 {
-  "your-name/dirdiff.nvim",
+  "jhimcras/dirdiff.nvim",
   cmd = "DirDiff",
   opts = {},
 }
@@ -26,7 +26,7 @@ Neovim 0.10+ (uses `vim.uv`, `vim.fs.joinpath`)
 
 ```lua
 {
-  "your-name/dirdiff.nvim",
+  "jhimcras/dirdiff.nvim",
   config = function()
     require("dirdiff").setup()
   end,
