@@ -2,8 +2,10 @@
 --
 -- diff.compute marks same-size / different-mtime pairs with verify=true because
 -- mtime alone is unreliable (it changes on copy/checkout). This module reads
--- both sides via vim.uv and drops the entry when the bytes are equal, so files
--- that are actually identical no longer show up as modified.
+-- both sides via vim.uv and retags the entry status="equal" when the bytes
+-- are equal (keeping it in the output, not dropping it), so files that are
+-- actually identical no longer show up as modified but can still be
+-- displayed/toggled without a re-scan.
 --
 -- Reads are async (never blocking the UI) and bounded: at most CONCURRENCY
 -- pairs are in flight, and files larger than MAX_SIZE are left as "modified"
@@ -71,8 +73,9 @@ local function compare_entry(entry, compare_opts, cb)
 end
 
 -- entries: output of diff.compute. Resolves every entry with verify=true by
--- reading content, then calls done(entries) with identical pairs removed and
--- the verify flag stripped. Safe to call on the main loop (all I/O is async).
+-- reading content, then calls done(entries) with identical pairs retagged
+-- status="equal" and the verify flag stripped. Safe to call on the main loop
+-- (all I/O is async).
 function M.resolve(entries, compare_opts, done)
   local candidates = {}
   for _, e in ipairs(entries) do
@@ -87,9 +90,9 @@ function M.resolve(entries, compare_opts, done)
       e.verify = nil
       if e._identical then
         e._identical = nil
-      else
-        out[#out + 1] = e
+        e.status = "equal"
       end
+      out[#out + 1] = e
     end
     -- finalize runs inside a libuv fs callback (fast event context), where the
     -- Vim API used by the renderer is forbidden; hop back to the main loop.

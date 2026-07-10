@@ -37,11 +37,15 @@ Neovim 0.10+ (uses `vim.uv`, `vim.fs.joinpath`)
 
 ```vim
 :DirDiff <dir1> [<dir2>]
+:DirDiffSeparation   " cycle the separation/grouping mode
+:DirDiffEqual        " cycle Equal-file visibility (skip/show/hidden)
+:DirDiffDiffFirst    " toggle whether Diff is listed before A only/B only
 ```
 
 - Both relative and absolute paths are supported. If `<dir2>` is omitted, it compares `<dir1>` against the current working directory (`:pwd`).
 - Directory completion (`-complete=dir`) is supported. Folder names containing spaces are automatically escaped during completion.
 - Comparison is case-insensitive on Windows and case-sensitive on Linux/macOS.
+- `:DirDiffSeparation` / `:DirDiffEqual` / `:DirDiffDiffFirst` change how the result is grouped and sorted; see [Sorting and grouping](#sorting-and-grouping). The chosen setting persists as the session default for subsequent `:DirDiff` calls. If run while no result buffer is open, the setting is saved silently (a notification confirms it) and applied the next time `:DirDiff` runs.
 
 ### Result view keymaps
 
@@ -52,6 +56,11 @@ Buffer-local mappings that only apply inside the result buffer:
 | `<CR>`        | Open the diff. Opens vimdiff if the file exists on both sides, otherwise opens the single existing file. |
 | `R` / `<F5>`  | Re-scan both directories and refresh the result                                  |
 | `q`           | Close the result view and clean up resources                                     |
+| `gs`          | Cycle the separation/grouping mode (`folder_diff` → `diff_folder` → `diff_only` → `folder_only`) |
+| `ge`          | Cycle Equal-file visibility (`skip` → `show` → `hidden`)                          |
+| `gd`          | Toggle whether the Diff (modified) group is listed before A only/B only          |
+
+All of the above are configurable via `keymaps` (see Configuration) — set a key to `false` to disable it, or a list of strings to bind several keys to the same action.
 
 ## Configuration
 
@@ -72,11 +81,28 @@ require("dirdiff").setup({
     ignore_newline = false,  -- (planned) treat newline-only differences (CRLF/LF) as identical
     ignore_encoding = false, -- (planned) treat encoding-only differences (BOM, etc.) as identical
   },
+  -- Sort/grouping of the result view. See "Sorting and grouping" below.
+  sort = {
+    separation = "diff_only", -- "folder_diff" | "diff_folder" | "diff_only" | "folder_only"
+    equal = "skip",           -- "skip" | "show" | "hidden"
+    diff_first = false,
+  },
   -- Highlight groups per status (linked to the colorscheme's diff colors).
   highlights = {
     added = "DiffAdd",
     deleted = "DiffDelete",
     modified = "DiffChange",
+    equal = "Comment",
+  },
+  -- Buffer-local keymaps for the result view. Set an entry to `false` to
+  -- disable it. `refresh` accepts a list of keys bound to the same action.
+  keymaps = {
+    open = "<CR>",
+    refresh = { "R", "<F5>" },
+    close = "q",
+    toggle_separation = "gs",
+    toggle_equal = "ge",
+    toggle_diff_first = "gd",
   },
 })
 ```
@@ -99,6 +125,73 @@ Specifying a file name (e.g. `.gitignore`) in `ignore_files` means that whenever
 - Same size but different mtime → both sides are read and compared byte-for-byte; shown as modified only if the bytes differ. This read is asynchronous so it doesn't block the UI, and very large files (over 20MiB) are left as modified without being read.
 
 `compare.ignore_newline` / `compare.ignore_encoding` are reserved options for treating newline-only or encoding-only differences as identical. Both default to `false`, and only byte-exact comparison is implemented for now (support planned).
+
+## Sorting and grouping
+
+The result view is always sorted ascending by relative path. On top of that, `sort` (and its runtime toggles `gs`/`ge`/`gd`) controls how entries are grouped. The buffer's third line (`Sort: ...`, right under `A:`/`B:`) always shows the current `separation` / `equal` / `diff_first` values and updates live as you toggle.
+
+> **Note:** the default `separation` is `"diff_only"`, which shows status headers ("A only" / "B only" / "Diff") instead of a flat list. This is a visible behavior change even with no `setup()` call at all.
+
+Every group header — at any nesting level — is a native fold covering that header and its entries, shown as `Label (N files) ▼` when open and `Label (N files) ▶` when closed; toggle it as usual with `zo`/`za`/`zc`. Only the Equal group starts closed, and only when `sort.equal == "hidden"`; every other group starts open. A blank line separates each top-level group.
+
+### Equal-file visibility (`sort.equal` / `ge` / `:DirDiffEqual`)
+
+Files that are identical on both sides ("Equal") are, by default, not shown at all.
+
+- `"skip"` (default): Equal files never appear.
+- `"show"`: Equal files appear, in their own group/section (starts open, like any other group).
+- `"hidden"`: Equal files appear but their fold starts closed. Open with `zo`/`za` as usual.
+
+### Diff-first ordering (`sort.diff_first` / `gd` / `:DirDiffDiffFirst`)
+
+Controls whether the "Diff" (modified) group is listed before or after "A only"/"B only". The Equal group, when shown, is always listed last regardless of this setting.
+
+### Separation modes (`sort.separation` / `gs` / `:DirDiffSeparation`)
+
+- `"diff_only"` (default): status groups only, entries listed with their full relative path.
+  ```
+  A only (1 file) ▼
+    added.txt
+
+  B only (1 file) ▼
+    deleted.txt
+
+  Diff (1 file) ▼
+    src/lib/modified.txt
+  ```
+- `"folder_diff"`: folder groups first (ascending), then status subgroups within each folder.
+  ```
+  (root) (1 file) ▼
+    A only (1 file) ▼
+      added.txt
+
+  src/lib/ (1 file) ▼
+    Diff (1 file) ▼
+      modified.txt
+  ```
+- `"diff_folder"`: status groups first, then folder subgroups within each status.
+  ```
+  A only (1 file) ▼
+    (root) (1 file) ▼
+      added.txt
+
+  Diff (1 file) ▼
+    src/lib/ (1 file) ▼
+      modified.txt
+  ```
+- `"folder_only"`: folder groups only, with statuses mixed inline (no per-status header). Equal entries, if shown, always form their own trailing block per folder so folding stays predictable.
+  ```
+  (root) (2 files) ▼
+    + added.txt
+    - deleted.txt
+
+  src/lib/ (2 files) ▼
+    ~ modified.txt
+    Equal (1 file) ▼
+      = same.txt
+  ```
+
+Folder grouping is flat by immediate parent directory (e.g. `src/lib/` is its own header, not nested under `src/`); root-level files group under `(root)`. The blank line between top-level groups above is the actual, literal separator rendered in the buffer.
 
 ## Development / Testing
 

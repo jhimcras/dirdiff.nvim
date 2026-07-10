@@ -5,19 +5,21 @@
 --                     size = <bytes>, mtime = <seconds> }
 --
 -- An entry is:
---   { rel = <display path>, status = "added"|"deleted"|"modified",
+--   { rel = <display path>, status = "added"|"deleted"|"modified"|"equal",
 --     abs_a = <path or nil>, abs_b = <path or nil> }
 --
 -- Semantics (spec 3.1): A is the "new" side, B the "base" side.
 --   only in A -> added, only in B -> deleted.
 -- For a file present on both sides:
 --   size differs                 -> modified (content unread, certain)
---   size equal, mtime equal      -> assumed identical, no entry (fast path;
---                                   mtime is only trusted to say "same", never
---                                   "modified")
+--   size equal, mtime equal      -> status=equal, assumed identical without
+--                                   reading content (fast path; mtime is only
+--                                   trusted to say "same", never "modified",
+--                                   so this fast path is never re-verified)
 --   size equal, mtime differs    -> modified with verify=true, meaning the
 --                                   content module must confirm by reading both
---                                   files; identical content drops the entry.
+--                                   files; identical content retags the entry
+--                                   as status=equal instead of dropping it.
 local M = {}
 
 function M.compute(snap_a, snap_b)
@@ -39,6 +41,9 @@ function M.compute(snap_a, snap_b)
         abs_b = b.abs,
         verify = true,
       }
+    else
+      entries[#entries + 1] =
+        { rel = a.rel, status = "equal", abs_a = a.abs, abs_b = b.abs }
     end
   end
 

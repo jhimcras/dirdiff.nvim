@@ -15,3 +15,15 @@ end, {
   complete = "dir",
   desc = "List file differences between two directories",
 })
+
+vim.api.nvim_create_user_command("DirDiffSeparation", function()
+  require("dirdiff").toggle_separation()
+end, { desc = "Cycle dirdiff grouping/separation mode" })
+
+vim.api.nvim_create_user_command("DirDiffEqual", function()
+  require("dirdiff").toggle_equal()
+end, { desc = "Cycle dirdiff Equal-file visibility (skip/show/hidden)" })
+
+vim.api.nvim_create_user_command("DirDiffDiffFirst", function()
+  require("dirdiff").toggle_diff_first()
+end, { desc = "Toggle whether the Diff (modified) group is listed first" })

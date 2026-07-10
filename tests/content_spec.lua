@@ -20,13 +20,15 @@ local function resolve(entries)
 end
 
 describe("dirdiff.content", function()
-  it("drops a verify candidate whose contents are identical", function()
+  it("retags a verify candidate whose contents are identical as equal", function()
     local a = tmpfile("hello world")
     local b = tmpfile("hello world")
     local out = resolve({
       { rel = "x.txt", status = "modified", abs_a = a, abs_b = b, verify = true },
     })
-    assert.equals(0, #out)
+    assert.equals(1, #out)
+    assert.equals("equal", out[1].status)
+    assert.is_nil(out[1].verify)
   end)
 
   it("keeps a verify candidate whose contents differ and strips verify", function()
@@ -75,9 +77,11 @@ describe("dirdiff.content", function()
       { rel = "b.txt", status = "modified", abs_a = same_a, abs_b = same_b, verify = true },
       { rel = "c.txt", status = "modified", abs_a = diff_a, abs_b = diff_b, verify = true },
     })
-    -- b.txt (identical) is dropped; a.txt and c.txt survive in order.
-    assert.equals(2, #out)
+    -- b.txt (identical) is retagged as equal, not dropped; order is preserved.
+    assert.equals(3, #out)
     assert.equals("a.txt", out[1].rel)
-    assert.equals("c.txt", out[2].rel)
+    assert.equals("b.txt", out[2].rel)
+    assert.equals("equal", out[2].status)
+    assert.equals("c.txt", out[3].rel)
   end)
 end)

@@ -5,7 +5,7 @@ local function entry(rel, size, mtime, abs)
 end
 
 describe("dirdiff.diff", function()
-  it("detects added / deleted / modified and skips identical", function()
+  it("detects added / deleted / modified and tags identical as equal", function()
     local a = {
       ["same.txt"] = entry("same.txt", 10, 100),
       ["only_a.txt"] = entry("only_a.txt", 5, 100),
@@ -25,8 +25,9 @@ describe("dirdiff.diff", function()
       by_rel[e.rel] = e
     end
 
-    -- Identical size and mtime: assumed identical, no entry.
-    assert.is_nil(by_rel["same.txt"])
+    -- Identical size and mtime: assumed identical, tagged equal.
+    assert.equals("equal", by_rel["same.txt"].status)
+    assert.equals("/a/same.txt", by_rel["same.txt"].abs_a)
     assert.equals("added", by_rel["only_a.txt"].status)
     assert.equals("deleted", by_rel["only_b.txt"].status)
     -- Different size: modified for certain, no content check needed.
@@ -35,7 +36,7 @@ describe("dirdiff.diff", function()
     -- Same size, different mtime: modified only if content confirms it.
     assert.equals("modified", by_rel["diff_mtime.txt"].status)
     assert.is_true(by_rel["diff_mtime.txt"].verify)
-    assert.equals(4, #result)
+    assert.equals(5, #result)
   end)
 
   it("returns entries sorted by rel path", function()

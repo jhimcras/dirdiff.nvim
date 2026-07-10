@@ -4,6 +4,7 @@ local path = require("dirdiff.path")
 local scan = require("dirdiff.scan")
 local diff = require("dirdiff.diff")
 local content = require("dirdiff.content")
+local group = require("dirdiff.group")
 local ui = require("dirdiff.ui")
 
 local M = {}
@@ -12,10 +13,75 @@ local M = {}
 local is_comparing = false
 -- Remembers the last comparison so refresh can rescan the same roots.
 local last = nil
+-- Full resolved entries (incl. "equal") from the most recent completed
+-- compare, kept around so sort/grouping toggles can re-render without
+-- re-scanning the filesystem.
+local last_entries = nil
+-- bufnr of the most recently rendered result buffer, or nil.
+local last_buf = nil
 
 function M.setup(opts)
   config.setup(opts)
   ui.setup_highlights(config.options.highlights)
+end
+
+-- Renders last_entries into win (or the current window if win is nil),
+-- using the current sort/keymaps config. No-op if nothing has been compared
+-- yet.
+local function render_current(win)
+  if not last or not last_entries then
+    return
+  end
+  last_buf = ui.render({
+    root_a = last.root_a,
+    root_b = last.root_b,
+    entries = last_entries,
+    sort = config.options.sort,
+    keymaps = config.options.keymaps,
+    win = win,
+    on_refresh = M.refresh,
+    on_toggle_separation = M.toggle_separation,
+    on_toggle_equal = M.toggle_equal,
+    on_toggle_diff_first = M.toggle_diff_first,
+  })
+end
+
+local function has_open_result_buffer()
+  return last_buf ~= nil and vim.api.nvim_buf_is_valid(last_buf)
+end
+
+-- Mutates config.options.sort (so the change persists as the session
+-- default) and, if a result buffer is currently displayed somewhere,
+-- re-renders it in place without triggering a re-scan. Never hijacks an
+-- unrelated window.
+local function apply_toggle(mutate)
+  mutate()
+  if has_open_result_buffer() then
+    local winid = vim.fn.bufwinid(last_buf)
+    if winid ~= -1 then
+      render_current(winid)
+      return
+    end
+  end
+  vim.notify("dirdiff: setting saved for the next :DirDiff", vim.log.levels.INFO)
+end
+
+function M.toggle_separation()
+  apply_toggle(function()
+    config.options.sort.separation = group.next_separation(config.options.sort.separation)
+  end)
+end
+
+function M.toggle_equal()
+  apply_toggle(function()
+    config.options.sort.equal = group.next_equal(config.options.sort.equal)
+  end)
+end
+
+function M.toggle_diff_first()
+  apply_toggle(function()
+    config.options.sort.diff_first = not config.options.sort.diff_first
+  end)
 end
 
 local function compare(root_a, root_b)
@@ -46,12 +112,8 @@ local function compare(root_a, root_b)
       -- rendering; is_comparing is released once verification completes.
       content.resolve(diff.compute(snap_a, snap_b), config.options.compare, function(entries)
         is_comparing = false
-        ui.render({
-          root_a = root_a,
-          root_b = root_b,
-          entries = entries,
-          on_refresh = M.refresh,
-        })
+        last_entries = entries
+        render_current(nil)
       end)
     end
   end
