@@ -1,0 +1,8 @@
+# plenary.nvim test clone (auto-created by `make test`)
+.tests/
+# tokensave MCP local code-graph db
+.tokensave/
+# local Claude Code project settings
+.claude/
+# local working handoff note (not part of the plugin)
+HANDOFF.md
