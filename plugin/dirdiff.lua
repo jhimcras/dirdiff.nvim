@@ -4,7 +4,7 @@ end
 vim.g.loaded_dirdiff = true
 
 vim.api.nvim_create_user_command("DirDiff", function(opts)
-  local args = opts.fargs
+  local args = require("dirdiff.path").parse_args(opts.args)
   if #args < 1 then
     vim.notify("dirdiff: usage :DirDiff <dir1> [<dir2>]", vim.log.levels.ERROR)
     return

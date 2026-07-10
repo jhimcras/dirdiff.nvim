@@ -17,6 +17,26 @@ describe("dirdiff.path", function()
     assert.equals("a/b/c", path.join("a/b", "c"))
   end)
 
+  it("parse_args splits unquoted args on whitespace", function()
+    assert.same({ "a", "b" }, path.parse_args("a b"))
+    assert.same({ "a", "b" }, path.parse_args("  a   b  "))
+  end)
+
+  it("parse_args strips quotes and preserves backslashes inside them", function()
+    assert.same(
+      { [[d:\Source\hi6_control_sw]], [[d:\Source\remote]] },
+      path.parse_args([["d:\Source\hi6_control_sw" "d:\Source\remote"]])
+    )
+  end)
+
+  it("parse_args keeps spaces inside quoted args as one field", function()
+    assert.same({ "C:\\Program Files\\a", "b" }, path.parse_args([["C:\Program Files\a" b]]))
+  end)
+
+  it("parse_args supports single quotes too", function()
+    assert.same({ "a b", "c" }, path.parse_args("'a b' c"))
+  end)
+
   it("compare_key respects platform case sensitivity", function()
     local key = path.compare_key("Foo/Bar.txt")
     if path.is_windows() then
