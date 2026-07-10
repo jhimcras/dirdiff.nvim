@@ -75,11 +75,11 @@ require("dirdiff").setup({
   -- checked for a file with this name and its contents are applied as ignore
   -- rules (default: empty = disabled).
   ignore_files = { ".gitignore" },
-  -- How "modified" is determined. The two options below are reserved for
-  -- future support; only byte-exact comparison is implemented for now.
+  -- How "modified" is determined. When either option is enabled, files that
+  -- differ only in newlines/BOM are content-verified and reported as Equal.
   compare = {
-    ignore_newline = false,  -- (planned) treat newline-only differences (CRLF/LF) as identical
-    ignore_encoding = false, -- (planned) treat encoding-only differences (BOM, etc.) as identical
+    ignore_newline = false,  -- treat CRLF/CR/LF newline differences as identical
+    ignore_encoding = false, -- treat a leading BOM difference as identical (BOM strip only)
   },
   -- Sort/grouping of the result view. See "Sorting and grouping" below.
   sort = {
@@ -124,7 +124,12 @@ Specifying a file name (e.g. `.gitignore`) in `ignore_files` means that whenever
 - Same size and same mtime → assumed identical (fast path, content not read).
 - Same size but different mtime → both sides are read and compared byte-for-byte; shown as modified only if the bytes differ. This read is asynchronous so it doesn't block the UI, and very large files (over 20MiB) are left as modified without being read.
 
-`compare.ignore_newline` / `compare.ignore_encoding` are reserved options for treating newline-only or encoding-only differences as identical. Both default to `false`, and only byte-exact comparison is implemented for now (support planned).
+`compare.ignore_newline` / `compare.ignore_encoding` relax the byte-exact comparison so that files differing only in line endings or a byte-order mark are treated as identical. Both default to `false` (plain byte-exact compare). When either is enabled, size-mismatched pairs that would otherwise be assumed modified are read and compared under the relaxed rules, and identical pairs are reported as Equal.
+
+- `ignore_newline`: normalizes `CRLF` and lone `CR` to `LF` before comparing, so a file converted between DOS/Unix/classic-Mac line endings is not flagged as modified.
+- `ignore_encoding`: strips a leading BOM (UTF-8, UTF-16LE, UTF-16BE) before comparing. This only removes the BOM; it does **not** transcode between encodings, so two files with genuinely different byte encodings still compare as modified.
+
+Both options apply only to the content-comparison step. The 20 MiB size cap still applies: pairs larger than that are left as modified without being read.
 
 ## Sorting and grouping
 
