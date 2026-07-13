@@ -56,7 +56,7 @@ M.defaults = {
     -- Used when columns > lines: three vertical splits, list | A | B.
     -- Values are ratios (not literal columns); list's share of the total
     -- width is list/(list+a+b), and a/b split the remainder by a/(a+b).
-    wide = { list = 10, a = 45, b = 45 },
+    wide = { list = 22, a = 39, b = 39 },
     -- Used when lines >= columns: list gets a fixed height (lines) across
     -- the full width; A/B split the remaining height's width side-by-side,
     -- by ratio a/(a+b).
