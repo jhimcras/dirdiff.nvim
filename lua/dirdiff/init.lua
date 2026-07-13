@@ -38,6 +38,7 @@ local function render_current(win)
     entries = last_entries,
     sort = config.options.sort,
     keymaps = config.options.keymaps,
+    layout = config.options.layout,
     win = win,
     on_refresh = M.refresh,
     on_toggle_separation = M.toggle_separation,
@@ -48,6 +49,20 @@ end
 
 local function has_open_result_buffer()
   return last_buf ~= nil and vim.api.nvim_buf_is_valid(last_buf)
+end
+
+-- Reuses the window currently showing the result buffer if it's still
+-- open (so :DirDiff again, and refresh/toggle re-renders, stay in
+-- place); otherwise opens a fresh tab for the result list.
+local function target_list_window()
+  if has_open_result_buffer() then
+    local win = vim.fn.bufwinid(last_buf)
+    if win ~= -1 then
+      return win
+    end
+  end
+  vim.cmd("tabnew")
+  return vim.api.nvim_get_current_win()
 end
 
 -- Mutates config.options.sort (so the change persists as the session
@@ -113,7 +128,7 @@ local function compare(root_a, root_b)
       content.resolve(diff.compute(snap_a, snap_b, config.options.compare), config.options.compare, function(entries)
         is_comparing = false
         last_entries = entries
-        render_current(nil)
+        render_current(target_list_window())
       end)
     end
   end

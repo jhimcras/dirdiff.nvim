@@ -38,20 +38,92 @@ local function exists(p)
   return p ~= nil and vim.uv.fs_stat(p) ~= nil
 end
 
--- Open the diff/file for an entry, re-validating existence first (spec 2.3).
-local function open_entry(entry)
+-- Winids of the currently open diff pane(s) (one for single-side entries,
+-- two for a modified entry with both sides present), so the next
+-- selection can close them before opening the new one instead of
+-- accumulating splits (spec: replace, don't accumulate).
+local diff_wins = {}
+
+local function close_diff_wins()
+  for _, win in ipairs(diff_wins) do
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+  diff_wins = {}
+end
+
+-- Splits list_win, inside the same tab, to show the given file(s) as diff
+-- pane(s): three vertical splits (list | A | B) when the tab is wider
+-- than it is tall, or a fixed-height list strip on top with A/B
+-- side-by-side below when it's taller than wide (config.lua's `layout`
+-- option). Sizes are set *after* splitting so Neovim auto-grows the
+-- sibling window to fill whatever space is left.
+local function open_pair(list_win, abs_a, abs_b, layout)
+  vim.api.nvim_set_current_win(list_win)
+  local wide = vim.o.columns > vim.o.lines
+
+  local win_a, win_b
+  if wide then
+    vim.cmd("belowright vsplit " .. vim.fn.fnameescape(abs_a))
+    win_a = vim.api.nvim_get_current_win()
+    if abs_b then
+      vim.cmd("belowright vsplit " .. vim.fn.fnameescape(abs_b))
+      win_b = vim.api.nvim_get_current_win()
+    end
+
+    local cfg = layout.wide
+    local list_w = math.floor(vim.o.columns * cfg.list / (cfg.list + cfg.a + cfg.b))
+    vim.api.nvim_win_set_width(list_win, list_w)
+    if win_b then
+      local a_w = math.floor((vim.o.columns - list_w) * cfg.a / (cfg.a + cfg.b))
+      vim.api.nvim_win_set_width(win_a, a_w)
+    end
+  else
+    vim.cmd("belowright split " .. vim.fn.fnameescape(abs_a))
+    win_a = vim.api.nvim_get_current_win()
+    if abs_b then
+      vim.cmd("belowright vsplit " .. vim.fn.fnameescape(abs_b))
+      win_b = vim.api.nvim_get_current_win()
+    end
+
+    local cfg = layout.tall
+    vim.api.nvim_win_set_height(list_win, cfg.list_height)
+    if win_b then
+      local a_w = math.floor(vim.o.columns * cfg.a / (cfg.a + cfg.b))
+      vim.api.nvim_win_set_width(win_a, a_w)
+    end
+  end
+
+  if win_b then
+    vim.api.nvim_win_call(win_a, function()
+      vim.cmd("diffthis")
+    end)
+    vim.api.nvim_win_call(win_b, function()
+      vim.cmd("diffthis")
+    end)
+    diff_wins = { win_a, win_b }
+  else
+    diff_wins = { win_a }
+  end
+end
+
+-- Open the diff/file for an entry inside list_win's tab, re-validating
+-- existence first (spec 2.3). Replaces any previously opened diff panes.
+local function open_entry(list_win, entry, layout)
   local a_ok = exists(entry.abs_a)
   local b_ok = exists(entry.abs_b)
 
+  close_diff_wins()
+
   if entry.status == "modified" then
     if a_ok and b_ok then
-      vim.cmd.tabedit(vim.fn.fnameescape(entry.abs_a))
-      vim.cmd("diffsplit " .. vim.fn.fnameescape(entry.abs_b))
+      open_pair(list_win, entry.abs_a, entry.abs_b, layout)
     elseif a_ok then
-      vim.cmd.tabedit(vim.fn.fnameescape(entry.abs_a))
+      open_pair(list_win, entry.abs_a, nil, layout)
       vim.notify("dirdiff: other side no longer exists", vim.log.levels.WARN)
     elseif b_ok then
-      vim.cmd.tabedit(vim.fn.fnameescape(entry.abs_b))
+      open_pair(list_win, entry.abs_b, nil, layout)
       vim.notify("dirdiff: other side no longer exists", vim.log.levels.WARN)
     else
       vim.notify("dirdiff: file no longer exists", vim.log.levels.WARN)
@@ -61,7 +133,7 @@ local function open_entry(entry)
 
   local target = a_ok and entry.abs_a or (b_ok and entry.abs_b or nil)
   if target then
-    vim.cmd.tabedit(vim.fn.fnameescape(target))
+    open_pair(list_win, target, nil, layout)
   else
     vim.notify("dirdiff: file no longer exists", vim.log.levels.WARN)
   end
@@ -190,7 +262,7 @@ function M.render(ctx)
     local lnum = vim.api.nvim_win_get_cursor(0)[1]
     local entry = line_map[lnum]
     if entry then
-      open_entry(entry)
+      open_entry(vim.api.nvim_get_current_win(), entry, ctx.layout)
     end
   end)
 

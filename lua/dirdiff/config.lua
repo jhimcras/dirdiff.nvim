@@ -49,6 +49,19 @@ M.defaults = {
     toggle_equal = "ge",
     toggle_diff_first = "gd",
   },
+  -- Split layout for the per-file diff view, shown inside the same tab as
+  -- the result list. Orientation is chosen by comparing the editor's total
+  -- columns vs. lines.
+  layout = {
+    -- Used when columns > lines: three vertical splits, list | A | B.
+    -- Values are ratios (not literal columns); list's share of the total
+    -- width is list/(list+a+b), and a/b split the remainder by a/(a+b).
+    wide = { list = 10, a = 45, b = 45 },
+    -- Used when lines >= columns: list gets a fixed height (lines) across
+    -- the full width; A/B split the remaining height's width side-by-side,
+    -- by ratio a/(a+b).
+    tall = { list_height = 10, a = 50, b = 50 },
+  },
 }
 
 M.options = vim.deepcopy(M.defaults)
