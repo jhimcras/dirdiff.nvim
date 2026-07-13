@@ -42,7 +42,7 @@ Neovim 0.10+ (uses `vim.uv`, `vim.fs.joinpath`)
 :DirDiffDiffFirst    " toggle whether Diff is listed before A only/B only
 ```
 
-- Both relative and absolute paths are supported. If `<dir2>` is omitted, it compares `<dir1>` against the current working directory (`:pwd`).
+- Both relative and absolute paths are supported. If `<dir2>` is omitted, it compares the current working directory (`:pwd`) against `<dir1>`.
 - Directory completion (`-complete=dir`) is supported. Folder names containing spaces are automatically escaped during completion.
 - Comparison is case-insensitive on Windows and case-sensitive on Linux/macOS.
 - `:DirDiffSeparation` / `:DirDiffEqual` / `:DirDiffDiffFirst` change how the result is grouped and sorted; see [Sorting and grouping](#sorting-and-grouping). The chosen setting persists as the session default for subsequent `:DirDiff` calls. If run while no result buffer is open, the setting is saved silently (a notification confirms it) and applied the next time `:DirDiff` runs.

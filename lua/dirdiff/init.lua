@@ -128,10 +128,16 @@ local function compare(root_a, root_b)
   end)
 end
 
--- dir2 defaults to the current working directory (spec 3.3).
+-- dir1 defaults to the current working directory when only one path is given (spec 3.3).
 function M.open(dir1, dir2)
-  local root_a = path.absolute(dir1)
-  local root_b = dir2 and path.absolute(dir2) or path.absolute(vim.fn.getcwd())
+  local root_a, root_b
+  if dir2 then
+    root_a = path.absolute(dir1)
+    root_b = path.absolute(dir2)
+  else
+    root_a = path.absolute(vim.fn.getcwd())
+    root_b = path.absolute(dir1)
+  end
   compare(root_a, root_b)
 end
 
