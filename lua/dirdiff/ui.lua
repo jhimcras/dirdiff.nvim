@@ -54,6 +54,58 @@ local function close_diff_wins()
   diff_wins = {}
 end
 
+local function valid_wins(wins)
+  local out = {}
+  for _, win in ipairs(wins) do
+    if vim.api.nvim_win_is_valid(win) then
+      out[#out + 1] = win
+    end
+  end
+  return out
+end
+
+-- Windows in tabpage that "belong to" the diff panes: a loclist opened
+-- from win_a/win_b, or the tab's quickfix window. Closed together with
+-- the diff panes when the result list itself closes.
+local function related_windows(tabpage)
+  local related = {}
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tabpage)) do
+    local info = vim.fn.getwininfo(win)[1]
+    if info and info.loclist == 1 then
+      local owner = vim.fn.getloclist(win, { filewinid = 0 }).filewinid
+      for _, dwin in ipairs(diff_wins) do
+        if owner == dwin then
+          related[#related + 1] = win
+          break
+        end
+      end
+    elseif info and info.quickfix == 1 then
+      related[#related + 1] = win
+    end
+  end
+  return related
+end
+
+-- Closes the diff panes (and any loclist/quickfix window opened from
+-- them) when the result list buffer closes. Closes the whole tab too,
+-- unless some unrelated window is also open there.
+local function cleanup_on_close(tabpage)
+  local related = related_windows(tabpage)
+  close_diff_wins()
+  for _, win in ipairs(related) do
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+
+  if vim.api.nvim_tabpage_is_valid(tabpage) then
+    local remaining = vim.api.nvim_tabpage_list_wins(tabpage)
+    if #remaining <= 1 and #vim.api.nvim_list_tabpages() > 1 then
+      vim.cmd("tabclose " .. vim.api.nvim_tabpage_get_number(tabpage))
+    end
+  end
+end
+
 -- lhs may be a string, a list of strings (bound to the same fn), or false
 -- to disable that binding (config.lua's `keymaps` option).
 local function bind(buf, lhs, fn)
@@ -97,7 +149,21 @@ end
 -- sibling window to fill whatever space is left.
 local function open_pair(list_win, abs_a, abs_b, layout, goto_list_lhs)
   vim.api.nvim_set_current_win(list_win)
-  local wide = vim.o.columns > vim.o.lines
+  -- list_win's own size (not the editor's) is what's actually available to
+  -- split, since other windows already in the tab (e.g. a loclist/quickfix
+  -- window) aren't touched by splitting list_win.
+  local avail_w = vim.api.nvim_win_get_width(list_win)
+  local avail_h = vim.api.nvim_win_get_height(list_win)
+  local wide = avail_w > avail_h
+
+  -- With 'equalalways' on (Neovim's default), each split below triggers a
+  -- re-equalization across *every* window in the tab, not just the ones
+  -- being split -- so other windows (e.g. a loclist/quickfix pane) get
+  -- resized too, and win_b's auto-grow absorbs whatever that leaves
+  -- behind instead of just list_win's own space. Disable it for the
+  -- split sequence so only list_win's own area is redistributed.
+  local saved_equalalways = vim.o.equalalways
+  vim.o.equalalways = false
 
   local win_a, win_b
   if wide then
@@ -108,11 +174,12 @@ local function open_pair(list_win, abs_a, abs_b, layout, goto_list_lhs)
       win_b = vim.api.nvim_get_current_win()
     end
 
+    vim.o.equalalways = saved_equalalways
     local cfg = layout.wide
-    local list_w = math.floor(vim.o.columns * cfg.list / (cfg.list + cfg.a + cfg.b))
+    local list_w = math.floor(avail_w * cfg.list / (cfg.list + cfg.a + cfg.b))
     vim.api.nvim_win_set_width(list_win, list_w)
     if win_b then
-      local a_w = math.floor((vim.o.columns - list_w) * cfg.a / (cfg.a + cfg.b))
+      local a_w = math.floor((avail_w - list_w) * cfg.a / (cfg.a + cfg.b))
       vim.api.nvim_win_set_width(win_a, a_w)
     end
   else
@@ -123,10 +190,14 @@ local function open_pair(list_win, abs_a, abs_b, layout, goto_list_lhs)
       win_b = vim.api.nvim_get_current_win()
     end
 
+    -- Same equalalways-restore-before-resize ordering as the wide branch:
+    -- restoring it after these nvim_win_set_height/width calls would trigger
+    -- an immediate re-equalize pass that undoes them.
+    vim.o.equalalways = saved_equalalways
     local cfg = layout.tall
     vim.api.nvim_win_set_height(list_win, cfg.list_height)
     if win_b then
-      local a_w = math.floor(vim.o.columns * cfg.a / (cfg.a + cfg.b))
+      local a_w = math.floor(avail_w * cfg.a / (cfg.a + cfg.b))
       vim.api.nvim_win_set_width(win_a, a_w)
     end
   end
@@ -163,39 +234,82 @@ local function open_pair(list_win, abs_a, abs_b, layout, goto_list_lhs)
   vim.api.nvim_set_current_win(win_a)
 end
 
+-- Reuses already-open diff windows for a new entry instead of closing and
+-- re-splitting: swaps each window's buffer and re-diffs in place. Avoids
+-- re-triggering open_pair's split/resize (and the size-squeeze it can
+-- suffer from other tab windows) on every navigation.
+local function reuse_pair(wins, paths, goto_list_lhs)
+  vim.cmd("diffoff!")
+  for i, win in ipairs(wins) do
+    vim.api.nvim_win_call(win, function()
+      vim.cmd("edit " .. vim.fn.fnameescape(paths[i]))
+    end)
+  end
+
+  if #wins == 2 then
+    for _, win in ipairs(wins) do
+      vim.api.nvim_win_call(win, function()
+        vim.cmd("diffthis")
+      end)
+    end
+  end
+
+  local function goto_list()
+    require("dirdiff").goto_list()
+  end
+  for _, win in ipairs(wins) do
+    bind(vim.api.nvim_win_get_buf(win), goto_list_lhs, goto_list)
+  end
+
+  vim.api.nvim_set_current_win(wins[1])
+end
+
 -- Open the diff/file for an entry inside list_win's tab, re-validating
--- existence first (spec 2.3). Replaces any previously opened diff panes.
--- Returns true if a diff pane was actually opened.
+-- existence first (spec 2.3). Reuses the currently open diff windows when
+-- there are exactly as many as this entry needs; otherwise replaces
+-- whatever diff panes are open. Returns true if a diff pane was actually
+-- opened.
 local function open_entry(list_win, entry, layout, goto_list_lhs)
   local a_ok = exists(entry.abs_a)
   local b_ok = exists(entry.abs_b)
 
-  close_diff_wins()
-
+  local paths, warning
   if entry.status == "modified" then
     if a_ok and b_ok then
-      open_pair(list_win, entry.abs_a, entry.abs_b, layout, goto_list_lhs)
+      paths = { entry.abs_a, entry.abs_b }
     elseif a_ok then
-      open_pair(list_win, entry.abs_a, nil, layout, goto_list_lhs)
-      vim.notify("dirdiff: other side no longer exists", vim.log.levels.WARN)
+      paths = { entry.abs_a }
+      warning = "dirdiff: other side no longer exists"
     elseif b_ok then
-      open_pair(list_win, entry.abs_b, nil, layout, goto_list_lhs)
-      vim.notify("dirdiff: other side no longer exists", vim.log.levels.WARN)
-    else
-      vim.notify("dirdiff: file no longer exists", vim.log.levels.WARN)
-      return false
+      paths = { entry.abs_b }
+      warning = "dirdiff: other side no longer exists"
     end
-    return true
+  else
+    local target = a_ok and entry.abs_a or (b_ok and entry.abs_b or nil)
+    if target then
+      paths = { target }
+    end
   end
 
-  local target = a_ok and entry.abs_a or (b_ok and entry.abs_b or nil)
-  if target then
-    open_pair(list_win, target, nil, layout, goto_list_lhs)
-    return true
-  else
+  if not paths then
+    close_diff_wins()
     vim.notify("dirdiff: file no longer exists", vim.log.levels.WARN)
     return false
   end
+
+  local existing = valid_wins(diff_wins)
+  if #existing == #paths then
+    diff_wins = existing
+    reuse_pair(existing, paths, goto_list_lhs)
+  else
+    close_diff_wins()
+    open_pair(list_win, paths[1], paths[2], layout, goto_list_lhs)
+  end
+
+  if warning then
+    vim.notify(warning, vim.log.levels.WARN)
+  end
+  return true
 end
 
 -- foldtext for closed dirdiff group folds: swap the trailing "▼" baked into
@@ -279,6 +393,17 @@ function M.render(ctx)
 
   local target_win = ctx.win or 0
   vim.api.nvim_win_set_buf(target_win, buf)
+
+  -- Fires however the result buffer goes away (the `close` keymap, :bd,
+  -- :bwipeout) since bufhidden=wipe means it always ends in a wipeout.
+  local tabpage = vim.api.nvim_win_get_tabpage(target_win)
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = buf,
+    once = true,
+    callback = function()
+      cleanup_on_close(tabpage)
+    end,
+  })
 
   -- Native folds so every group (not just "hidden" equal blocks) is
   -- user-collapsible with zo/za; the header's baked-in "▼"/"▶" (via
