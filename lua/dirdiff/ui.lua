@@ -131,6 +131,14 @@ local function open_pair(list_win, abs_a, abs_b, layout, goto_list_lhs)
     end
   end
 
+  -- win_a/win_b were split off of list_win, so they inherit its window-local
+  -- 'foldtext' override; reset to the default so they don't show dirdiff's
+  -- group-fold text on the user's own files.
+  vim.wo[win_a].foldtext = ""
+  if win_b then
+    vim.wo[win_b].foldtext = ""
+  end
+
   if win_b then
     vim.api.nvim_win_call(win_a, function()
       vim.cmd("diffthis")
