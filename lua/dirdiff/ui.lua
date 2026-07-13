@@ -32,6 +32,7 @@ function M.setup_highlights(highlights)
   end
   vim.api.nvim_set_hl(0, "DirDiffGroupHeader", { link = "Title", default = true })
   vim.api.nvim_set_hl(0, "DirDiffSubHeader", { link = "NonText", default = true })
+  vim.api.nvim_set_hl(0, "DirDiffCurrent", { link = "QuickFixLine", default = true })
 end
 
 local function exists(p)
@@ -53,13 +54,48 @@ local function close_diff_wins()
   diff_wins = {}
 end
 
+-- lhs may be a string, a list of strings (bound to the same fn), or false
+-- to disable that binding (config.lua's `keymaps` option).
+local function bind(buf, lhs, fn)
+  if lhs == false or lhs == nil then
+    return
+  end
+  if type(lhs) == "table" then
+    for _, k in ipairs(lhs) do
+      bind(buf, k, fn)
+    end
+    return
+  end
+  vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true, silent = true })
+end
+
+-- Extmark marking which difflist line is currently shown in the diff
+-- split, so the marker moves (not accumulates) as the user selects new
+-- entries.
+local current_mark = { buf = nil, id = nil }
+
+local function mark_current_line(buf, lnum, len)
+  local opts = {
+    end_row = lnum - 1,
+    end_col = len,
+    hl_group = "DirDiffCurrent",
+    hl_mode = "combine",
+    priority = 4097,
+  }
+  if current_mark.buf == buf then
+    opts.id = current_mark.id
+  end
+  current_mark.id = vim.api.nvim_buf_set_extmark(buf, ns, lnum - 1, 0, opts)
+  current_mark.buf = buf
+end
+
 -- Splits list_win, inside the same tab, to show the given file(s) as diff
 -- pane(s): three vertical splits (list | A | B) when the tab is wider
 -- than it is tall, or a fixed-height list strip on top with A/B
 -- side-by-side below when it's taller than wide (config.lua's `layout`
 -- option). Sizes are set *after* splitting so Neovim auto-grows the
 -- sibling window to fill whatever space is left.
-local function open_pair(list_win, abs_a, abs_b, layout)
+local function open_pair(list_win, abs_a, abs_b, layout, goto_list_lhs)
   vim.api.nvim_set_current_win(list_win)
   local wide = vim.o.columns > vim.o.lines
 
@@ -106,11 +142,23 @@ local function open_pair(list_win, abs_a, abs_b, layout)
   else
     diff_wins = { win_a }
   end
+
+  local function goto_list()
+    require("dirdiff").goto_list()
+  end
+  bind(vim.api.nvim_win_get_buf(win_a), goto_list_lhs, goto_list)
+  if win_b then
+    bind(vim.api.nvim_win_get_buf(win_b), goto_list_lhs, goto_list)
+  end
+
+  -- B is created last and would otherwise keep focus; always land in A.
+  vim.api.nvim_set_current_win(win_a)
 end
 
 -- Open the diff/file for an entry inside list_win's tab, re-validating
 -- existence first (spec 2.3). Replaces any previously opened diff panes.
-local function open_entry(list_win, entry, layout)
+-- Returns true if a diff pane was actually opened.
+local function open_entry(list_win, entry, layout, goto_list_lhs)
   local a_ok = exists(entry.abs_a)
   local b_ok = exists(entry.abs_b)
 
@@ -118,24 +166,27 @@ local function open_entry(list_win, entry, layout)
 
   if entry.status == "modified" then
     if a_ok and b_ok then
-      open_pair(list_win, entry.abs_a, entry.abs_b, layout)
+      open_pair(list_win, entry.abs_a, entry.abs_b, layout, goto_list_lhs)
     elseif a_ok then
-      open_pair(list_win, entry.abs_a, nil, layout)
+      open_pair(list_win, entry.abs_a, nil, layout, goto_list_lhs)
       vim.notify("dirdiff: other side no longer exists", vim.log.levels.WARN)
     elseif b_ok then
-      open_pair(list_win, entry.abs_b, nil, layout)
+      open_pair(list_win, entry.abs_b, nil, layout, goto_list_lhs)
       vim.notify("dirdiff: other side no longer exists", vim.log.levels.WARN)
     else
       vim.notify("dirdiff: file no longer exists", vim.log.levels.WARN)
+      return false
     end
-    return
+    return true
   end
 
   local target = a_ok and entry.abs_a or (b_ok and entry.abs_b or nil)
   if target then
-    open_pair(list_win, target, nil, layout)
+    open_pair(list_win, target, nil, layout, goto_list_lhs)
+    return true
   else
     vim.notify("dirdiff: file no longer exists", vim.log.levels.WARN)
+    return false
   end
 end
 
@@ -241,19 +292,8 @@ function M.render(ctx)
     end)
   end
 
-  -- lhs may be a string, a list of strings (bound to the same fn), or false
-  -- to disable that binding (config.lua's `keymaps` option).
   local function map(lhs, fn)
-    if lhs == false or lhs == nil then
-      return
-    end
-    if type(lhs) == "table" then
-      for _, k in ipairs(lhs) do
-        map(k, fn)
-      end
-      return
-    end
-    vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true, silent = true })
+    bind(buf, lhs, fn)
   end
 
   local keymaps = ctx.keymaps or {}
@@ -262,7 +302,10 @@ function M.render(ctx)
     local lnum = vim.api.nvim_win_get_cursor(0)[1]
     local entry = line_map[lnum]
     if entry then
-      open_entry(vim.api.nvim_get_current_win(), entry, ctx.layout)
+      local opened = open_entry(vim.api.nvim_get_current_win(), entry, ctx.layout, keymaps.goto_list)
+      if opened then
+        mark_current_line(buf, lnum, #lines[lnum])
+      end
     end
   end)
 

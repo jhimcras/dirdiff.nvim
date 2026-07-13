@@ -99,6 +99,18 @@ function M.toggle_diff_first()
   end)
 end
 
+-- Jumps focus to the window showing the last comparison's result list, if
+-- it's still open. Used by the diff windows' goto-list keymap and by
+-- :DirDiffGotoList.
+function M.goto_list()
+  if has_open_result_buffer() then
+    local winid = vim.fn.bufwinid(last_buf)
+    if winid ~= -1 then
+      vim.api.nvim_set_current_win(winid)
+    end
+  end
+end
+
 local function compare(root_a, root_b)
   if is_comparing then
     vim.notify("dirdiff: a scan is already in progress", vim.log.levels.INFO)

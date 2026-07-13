@@ -48,6 +48,9 @@ M.defaults = {
     toggle_separation = "gs",
     toggle_equal = "ge",
     toggle_diff_first = "gd",
+    -- Bound in the diff windows (A/B), not the result list, to jump focus
+    -- back to the list.
+    goto_list = "gl",
   },
   -- Split layout for the per-file diff view, shown inside the same tab as
   -- the result list. Orientation is chosen by comparing the editor's total

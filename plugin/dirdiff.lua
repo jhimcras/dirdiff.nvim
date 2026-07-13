@@ -27,3 +27,7 @@ end, { desc = "Cycle dirdiff Equal-file visibility (skip/show/hidden)" })
 vim.api.nvim_create_user_command("DirDiffDiffFirst", function()
   require("dirdiff").toggle_diff_first()
 end, { desc = "Toggle whether the Diff (modified) group is listed first" })
+
+vim.api.nvim_create_user_command("DirDiffGotoList", function()
+  require("dirdiff").goto_list()
+end, { desc = "Jump focus from a diff window back to the result list" })
