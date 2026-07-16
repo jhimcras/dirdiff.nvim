@@ -203,11 +203,15 @@ local function open_pair(list_win, abs_a, abs_b, layout, goto_list_lhs)
   end
 
   -- win_a/win_b were split off of list_win, so they inherit its window-local
-  -- 'foldtext' override; reset to the default so they don't show dirdiff's
-  -- group-fold text on the user's own files.
-  vim.wo[win_a].foldtext = ""
+  -- 'foldtext' override; clear it so they fall back to the (global) default
+  -- instead of showing dirdiff's group-fold text on the user's own files.
+  vim.api.nvim_win_call(win_a, function()
+    vim.cmd("setlocal foldtext<")
+  end)
   if win_b then
-    vim.wo[win_b].foldtext = ""
+    vim.api.nvim_win_call(win_b, function()
+      vim.cmd("setlocal foldtext<")
+    end)
   end
 
   if win_b then
@@ -410,7 +414,13 @@ function M.render(ctx)
   -- M.foldtext) tracks the open/closed state automatically.
   vim.wo[target_win].foldmethod = "manual"
   vim.wo[target_win].foldenable = true
-  vim.wo[target_win].foldtext = "v:lua.require'dirdiff.ui'.foldtext()"
+  -- Use scope="local" (not vim.wo, which also sets the hidden global default
+  -- for this window-local option) so this custom foldtext doesn't become the
+  -- default for every window Neovim creates afterwards, including win_a/win_b.
+  vim.api.nvim_set_option_value("foldtext", "v:lua.require'dirdiff.ui'.foldtext()", {
+    scope = "local",
+    win = target_win,
+  })
   if #folds > 0 then
     vim.api.nvim_win_call(target_win, function()
       for _, r in ipairs(folds) do
