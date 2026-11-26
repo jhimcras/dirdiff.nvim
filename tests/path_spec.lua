@@ -33,6 +33,12 @@ describe("dirdiff.path", function()
     assert.same({ "C:\\Program Files\\a", "b" }, path.parse_args([["C:\Program Files\a" b]]))
   end)
 
+  it("parse_args treats backslash-space from completion as a literal space", function()
+    assert.same({ "a space/", "b" }, path.parse_args([[a\ space/ b]]))
+    assert.same({ "a b", "c d" }, path.parse_args([[a\ b c\ d]]))
+    assert.same({ [[d:\Source\x]], "y" }, path.parse_args([[d:\Source\x y]]))
+  end)
+
   it("parse_args supports single quotes too", function()
     assert.same({ "a b", "c" }, path.parse_args("'a b' c"))
   end)

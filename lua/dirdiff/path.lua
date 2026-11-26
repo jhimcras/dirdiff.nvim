@@ -49,11 +49,23 @@ function M.parse_args(argstr)
         i = len + 1
       end
     else
+      -- "\ " (as produced by directory completion) is a literal space;
+      -- any other backslash stays as-is (Windows separators).
+      local buf = {}
       local j = i
-      while j <= len and not argstr:sub(j, j):match("%s") do
-        j = j + 1
+      while j <= len do
+        local ch = argstr:sub(j, j)
+        if ch == "\\" and argstr:sub(j + 1, j + 1) == " " then
+          buf[#buf + 1] = " "
+          j = j + 2
+        elseif ch:match("%s") then
+          break
+        else
+          buf[#buf + 1] = ch
+          j = j + 1
+        end
       end
-      table.insert(args, argstr:sub(i, j - 1))
+      table.insert(args, table.concat(buf))
       i = j
     end
   end
