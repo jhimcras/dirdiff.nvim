@@ -10,6 +10,8 @@ local function make_roots(pairs_spec)
   vim.fn.mkdir(base .. "/a", "p")
   vim.fn.mkdir(base .. "/b", "p")
   for _, p in ipairs(pairs_spec) do
+    vim.fn.mkdir(vim.fn.fnamemodify(base .. "/a/" .. p.rel, ":h"), "p")
+    vim.fn.mkdir(vim.fn.fnamemodify(base .. "/b/" .. p.rel, ":h"), "p")
     vim.fn.writefile({ p.content_a }, base .. "/a/" .. p.rel)
     vim.fn.writefile({ p.content_b }, base .. "/b/" .. p.rel)
   end
@@ -160,11 +162,13 @@ describe("dirdiff.ui diff pane reuse", function()
     vim.fn.writefile({ "only on a side" }, base .. "/a/added.txt")
     config.setup({})
     dirdiff.open(base .. "/a", base .. "/b")
+    -- Same tab: the new comparison re-renders in the existing list window
+    -- (focus stays where it was).
     vim.wait(500, function()
-      return vim.bo.filetype == "dirdiff"
+      return table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(list_win), 0, -1, false), "\n"):find("added.txt", 1, true)
     end, 10)
-    list_win = vim.api.nvim_get_current_win()
-    list_buf = vim.api.nvim_get_current_buf()
+    list_buf = vim.api.nvim_win_get_buf(list_win)
+    vim.api.nvim_set_current_win(list_win)
     local added_lnum
     for i, line in ipairs(vim.api.nvim_buf_get_lines(list_buf, 0, -1, false)) do
       if line == "+ added.txt" then
@@ -265,5 +269,251 @@ describe("dirdiff.ui cleanup on close", function()
       end
     end
     assert.is_true(has_unrelated_loclist, "the unrelated window's own loclist survives")
+  end)
+end)
+
+-- Helpers for the multi-comparison / refresh specs below.
+
+local function list_lines(buf)
+  return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+end
+
+local function has_line(buf, text)
+  return vim.tbl_contains(list_lines(buf), text)
+end
+
+-- Runs :DirDiff for the given roots from the current (non-list) tab and
+-- returns the new result list's window and buffer.
+local function open_roots(root_a, root_b, opts)
+  config.setup(opts or {})
+  dirdiff.open(root_a, root_b)
+  vim.wait(500, function()
+    return vim.bo.filetype == "dirdiff"
+  end, 10)
+  return vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
+end
+
+local function press(keys)
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
+end
+
+local function press_enter_on_line(list_win, list_buf, line)
+  for i, l in ipairs(list_lines(list_buf)) do
+    if l == line then
+      vim.api.nvim_set_current_win(list_win)
+      vim.api.nvim_win_set_cursor(list_win, { i, 0 })
+      press("<CR>")
+      vim.wait(200)
+      return
+    end
+  end
+  error("no list line " .. line)
+end
+
+-- The diff panes of a list's tab: every window except the list itself,
+-- ordered left to right.
+local function panes_of(list_win)
+  local wins = other_wins(vim.api.nvim_win_get_tabpage(list_win), list_win)
+  table.sort(wins, function(a, b)
+    return vim.api.nvim_win_get_position(a)[2] < vim.api.nvim_win_get_position(b)[2]
+  end)
+  return wins
+end
+
+local function win_path(win)
+  return vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win))
+end
+
+local function wait_for_line(buf, text)
+  vim.wait(1000, function()
+    return vim.api.nvim_buf_is_valid(buf) and has_line(buf, text)
+  end, 10)
+end
+
+describe("dirdiff refresh and multiple comparisons", function()
+  after_each(function()
+    vim.cmd("tabfirst")
+    pcall(vim.cmd, "tabonly!")
+  end)
+
+  it("R keeps the open diff panes (same windows, files and diff mode)", function()
+    local root_a, root_b = make_roots({
+      { rel = "x.txt", content_a = "left", content_b = "right text" },
+    })
+    local list_win, list_buf = open_roots(root_a, root_b)
+    press_enter_on_line(list_win, list_buf, "~ x.txt")
+    local panes = panes_of(list_win)
+    assert.equals(2, #panes)
+    local paths = { win_path(panes[1]), win_path(panes[2]) }
+
+    vim.fn.writefile({ "a" }, root_a .. "/added.txt")
+    vim.api.nvim_set_current_win(list_win)
+    press("R")
+    wait_for_line(vim.api.nvim_win_get_buf(list_win), "+ added.txt")
+
+    assert.is_true(has_line(vim.api.nvim_win_get_buf(list_win), "+ added.txt"))
+    assert.same(panes, panes_of(list_win))
+    assert.same(paths, { win_path(panes[1]), win_path(panes[2]) })
+    assert.is_true(vim.wo[panes[1]].diff)
+    assert.is_true(vim.wo[panes[2]].diff)
+  end)
+
+  it("R on the first of two comparisons rescans only that one", function()
+    local a1, b1 = make_roots({ { rel = "first.txt", content_a = "one long", content_b = "1" } })
+    local a2, b2 = make_roots({ { rel = "second.txt", content_a = "two long", content_b = "2" } })
+    vim.cmd("tabfirst")
+    local win1, buf1 = open_roots(a1, b1)
+    vim.cmd("tabfirst")
+    local win2, buf2 = open_roots(a2, b2)
+    local tab1 = vim.api.nvim_win_get_tabpage(win1)
+    local ntabs = #vim.api.nvim_list_tabpages()
+    assert.equals(3, ntabs)
+    local before2 = list_lines(buf2)
+
+    vim.api.nvim_set_current_win(win1)
+    vim.fn.writefile({ "x" }, a1 .. "/new-first.txt")
+    press("R")
+    wait_for_line(vim.api.nvim_win_get_buf(win1), "+ new-first.txt")
+
+    assert.is_true(has_line(vim.api.nvim_win_get_buf(win1), "+ new-first.txt"))
+    assert.is_true(has_line(vim.api.nvim_win_get_buf(win1), "~ first.txt"))
+    assert.equals(tab1, vim.api.nvim_get_current_tabpage())
+    assert.equals(win1, vim.api.nvim_get_current_win())
+    assert.equals(ntabs, #vim.api.nvim_list_tabpages())
+    assert.same(before2, list_lines(buf2))
+    assert.is_false(has_line(vim.api.nvim_win_get_buf(win2), "~ first.txt"))
+  end)
+
+  it("q on the first of two comparisons leaves the other tab's diff panes alone", function()
+    local a1, b1 = make_roots({ { rel = "first.txt", content_a = "one long", content_b = "1" } })
+    local a2, b2 = make_roots({ { rel = "second.txt", content_a = "left second", content_b = "right second!" } })
+    vim.cmd("tabfirst")
+    local win1, buf1 = open_roots(a1, b1)
+    vim.cmd("tabfirst")
+    local win2, buf2 = open_roots(a2, b2)
+    press_enter_on_line(win2, buf2, "~ second.txt")
+    local panes2 = panes_of(win2)
+    assert.equals(2, #panes2)
+    local paths2 = { win_path(panes2[1]), win_path(panes2[2]) }
+    local tab1 = vim.api.nvim_win_get_tabpage(win1)
+    local tab2 = vim.api.nvim_win_get_tabpage(win2)
+
+    press_close(win1)
+
+    assert.is_false(vim.api.nvim_tabpage_is_valid(tab1))
+    assert.is_false(vim.api.nvim_buf_is_valid(buf1))
+    assert.is_true(vim.api.nvim_tabpage_is_valid(tab2))
+    assert.same(panes2, panes_of(win2))
+    assert.same(paths2, { win_path(panes2[1]), win_path(panes2[2]) })
+    assert.is_true(vim.wo[panes2[1]].diff and vim.wo[panes2[2]].diff)
+
+    -- Control: closing the second one only closes its own tab.
+    local a3, b3 = make_roots({ { rel = "third.txt", content_a = "three long", content_b = "3" } })
+    vim.cmd("tabfirst")
+    local win3, buf3 = open_roots(a3, b3)
+    press_close(win2)
+    assert.is_false(vim.api.nvim_tabpage_is_valid(tab2))
+    assert.is_true(vim.api.nvim_win_is_valid(win3))
+    assert.is_true(vim.api.nvim_buf_is_valid(buf3))
+  end)
+
+  it("DirDiffSeparation from another tab re-renders the existing result in place", function()
+    local root_a, root_b = make_roots({
+      { rel = "sub/x.txt", content_a = "left side", content_b = "r" },
+    })
+    local list_win, list_buf = open_roots(root_a, root_b)
+    local group = require("dirdiff.group")
+    local old = config.options.sort.separation
+    assert.equals("diff_only", old)
+    assert.is_true(vim.api.nvim_buf_get_lines(list_buf, 2, 3, false)[1]:find("diff_only", 1, true) ~= nil)
+
+    vim.cmd("tabfirst")
+    assert.not_equals(vim.api.nvim_win_get_tabpage(list_win), vim.api.nvim_get_current_tabpage())
+    dirdiff.toggle_separation()
+
+    local expected = group.next_separation(old)
+    assert.equals("folder_only", expected)
+    assert.is_true(vim.api.nvim_win_is_valid(list_win))
+    local buf = vim.api.nvim_win_get_buf(list_win)
+    assert.is_true(vim.api.nvim_buf_get_lines(buf, 2, 3, false)[1]:find(expected, 1, true) ~= nil)
+    local found = false
+    for _, l in ipairs(list_lines(buf)) do
+      if l:find("sub", 1, true) and l:find("1 file", 1, true) then
+        found = true
+      end
+    end
+    assert.is_true(found, "folder group header for sub is shown")
+    assert.is_true(has_line(buf, "~ sub/x.txt"))
+    assert.is_false(vim.api.nvim_tabpage_get_number(vim.api.nvim_win_get_tabpage(list_win)) == vim.api.nvim_tabpage_get_number(0))
+  end)
+end)
+
+describe("dirdiff entries and mappings", function()
+  after_each(function()
+    vim.cmd("tabfirst")
+    pcall(vim.cmd, "tabonly!")
+  end)
+
+  it("opens both sides of an Equal entry in diff mode", function()
+    local root_a, root_b = make_roots({ { rel = "report.txt", content_a = "same", content_b = "same" } })
+    local list_win, list_buf = open_roots(root_a, root_b, { sort = { equal = "show" } })
+    press_enter_on_line(list_win, list_buf, "= report.txt")
+
+    local panes = panes_of(list_win)
+    assert.equals(2, #panes)
+    assert.equals(vim.uv.fs_realpath(root_a .. "/report.txt"), vim.uv.fs_realpath(win_path(panes[1])))
+    assert.equals(vim.uv.fs_realpath(root_b .. "/report.txt"), vim.uv.fs_realpath(win_path(panes[2])))
+    assert.is_true(vim.wo[panes[1]].diff and vim.wo[panes[2]].diff)
+  end)
+
+  it("restores a pre-existing buffer-local gl mapping after the comparison closes", function()
+    local root_a, root_b = make_roots({ { rel = "x.txt", content_a = "alpha bravo charlie", content_b = "other side" } })
+    vim.cmd("tabfirst")
+    vim.cmd("edit " .. vim.fn.fnameescape(root_a .. "/x.txt"))
+    vim.cmd("nnoremap <buffer> gl $")
+    local normal_win = vim.api.nvim_get_current_win()
+    local normal_buf = vim.api.nvim_get_current_buf()
+
+    local list_win, list_buf = open_roots(root_a, root_b)
+    press_enter_on_line(list_win, list_buf, "~ x.txt")
+    local win_a = panes_of(list_win)[1]
+    assert.equals(normal_buf, vim.api.nvim_win_get_buf(win_a))
+    assert.equals(win_a, vim.api.nvim_get_current_win())
+
+    -- In the diff pane gl goes to the list (the plugin's mapping wins).
+    press("gl")
+    assert.equals(list_win, vim.api.nvim_get_current_win())
+
+    press_close(list_win)
+
+    vim.api.nvim_set_current_win(normal_win)
+    local map = vim.fn.maparg("gl", "n", false, true)
+    assert.equals("$", map.rhs)
+    assert.equals(1, map.buffer)
+    vim.api.nvim_win_set_cursor(normal_win, { 1, 0 })
+    press("0gl")
+    assert.equals(18, vim.api.nvim_win_get_cursor(normal_win)[2])
+    vim.cmd("bwipeout!")
+  end)
+
+  it("lists and opens a file whose name contains a newline", function()
+    local base = vim.fn.tempname()
+    vim.fn.mkdir(base .. "/a", "p")
+    vim.fn.mkdir(base .. "/b", "p")
+    local name = "alpha\nbeta.txt"
+    vim.fn.writefile({ "payload" }, base .. "/a/" .. name)
+    vim.fn.writefile({ "payload" }, base .. "/a/plain.txt")
+    local list_win, list_buf = open_roots(base .. "/a", base .. "/b")
+
+    assert.is_true(has_line(list_buf, "+ alpha\\nbeta.txt"))
+    press_enter_on_line(list_win, list_buf, "+ alpha\\nbeta.txt")
+    local panes = panes_of(list_win)
+    assert.equals(1, #panes)
+    assert.equals(vim.uv.fs_realpath(base .. "/a/" .. name), vim.uv.fs_realpath(win_path(panes[1])))
+    assert.same({ "payload" }, vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(panes[1]), 0, -1, false))
+
+    -- Control: an ordinary name still works (and reuses the single pane).
+    press_enter_on_line(list_win, list_buf, "+ plain.txt")
+    assert.equals(vim.uv.fs_realpath(base .. "/a/plain.txt"), vim.uv.fs_realpath(win_path(panes_of(list_win)[1])))
   end)
 end)

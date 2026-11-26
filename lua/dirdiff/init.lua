@@ -11,53 +11,85 @@ local M = {}
 
 -- Soft lock: reject overlapping comparison/refresh requests (spec 2.2).
 local is_comparing = false
--- Remembers the last comparison so refresh can rescan the same roots.
-local last = nil
--- Full resolved entries (incl. "equal") from the most recent completed
--- compare, kept around so sort/grouping toggles can re-render without
--- re-scanning the filesystem.
-local last_entries = nil
--- bufnr of the most recently rendered result buffer, or nil.
-local last_buf = nil
+-- One session per comparison/result list (each normally in its own tab):
+-- { root_a, root_b, entries, ui }. `entries` are the full resolved entries
+-- (incl. "equal") from the last completed compare, kept so sort/grouping
+-- toggles can re-render without re-scanning; `ui` is the per-list UI state
+-- owned by dirdiff.ui. Most recently rendered is last.
+local sessions = {}
 
 function M.setup(opts)
   config.setup(opts)
   ui.setup_highlights(config.options.highlights)
 end
 
--- Renders last_entries into win (or the current window if win is nil),
--- using the current sort/keymaps config. No-op if nothing has been compared
--- yet.
-local function render_current(win)
-  if not last or not last_entries then
-    return
+local function session_open(session)
+  return session.ui.buf ~= nil and vim.api.nvim_buf_is_valid(session.ui.buf)
+end
+
+-- Drops sessions whose result buffer is gone and returns the live ones.
+local function live_sessions()
+  local live = {}
+  for _, session in ipairs(sessions) do
+    if session_open(session) then
+      live[#live + 1] = session
+    end
   end
-  last_buf = ui.render({
-    root_a = last.root_a,
-    root_b = last.root_b,
-    entries = last_entries,
+  sessions = live
+  return live
+end
+
+-- Session whose result list or diff panes are in the current tab, or nil.
+local function current_session()
+  local tabpage = vim.api.nvim_get_current_tabpage()
+  for _, session in ipairs(live_sessions()) do
+    if session.ui.tabpage == tabpage then
+      return session
+    end
+  end
+end
+
+-- The comparison in the current tab, else the most recently rendered one.
+local function default_session()
+  local session = current_session()
+  if session then
+    return session
+  end
+  local live = live_sessions()
+  return live[#live]
+end
+
+-- Renders session.entries into win (or the current window if win is nil),
+-- using the current sort/keymaps config.
+local function render_session(session, win)
+  ui.render({
+    state = session.ui,
+    root_a = session.root_a,
+    root_b = session.root_b,
+    entries = session.entries,
     sort = config.options.sort,
     keymaps = config.options.keymaps,
     layout = config.options.layout,
     win = win,
-    on_refresh = M.refresh,
+    on_refresh = function()
+      M.refresh(session)
+    end,
     on_toggle_separation = M.toggle_separation,
     on_toggle_equal = M.toggle_equal,
     on_toggle_diff_first = M.toggle_diff_first,
   })
+  if not vim.tbl_contains(sessions, session) then
+    sessions[#sessions + 1] = session
+  end
 end
 
-local function has_open_result_buffer()
-  return last_buf ~= nil and vim.api.nvim_buf_is_valid(last_buf)
-end
-
--- Reuses the window currently showing the result buffer if it's still
--- open (so :DirDiff again, and refresh/toggle re-renders, stay in
+-- Reuses the window currently showing the session's result buffer if it's
+-- still open (so :DirDiff again, and refresh/toggle re-renders, stay in
 -- place); otherwise opens a fresh tab for the result list.
-local function target_list_window()
-  if has_open_result_buffer() then
-    local win = vim.fn.bufwinid(last_buf)
-    if win ~= -1 then
+local function target_list_window(session)
+  if session_open(session) then
+    local win = vim.fn.win_findbuf(session.ui.buf)[1]
+    if win then
       return win
     end
   end
@@ -66,19 +98,22 @@ local function target_list_window()
 end
 
 -- Mutates config.options.sort (so the change persists as the session
--- default) and, if a result buffer is currently displayed somewhere,
--- re-renders it in place without triggering a re-scan. Never hijacks an
--- unrelated window.
+-- default) and re-renders every open result list in place, in whichever
+-- tab it is, without triggering a re-scan. Never hijacks an unrelated
+-- window.
 local function apply_toggle(mutate)
   mutate()
-  if has_open_result_buffer() then
-    local winid = vim.fn.bufwinid(last_buf)
-    if winid ~= -1 then
-      render_current(winid)
-      return
+  local rendered = false
+  for _, session in ipairs(live_sessions()) do
+    local winid = vim.fn.win_findbuf(session.ui.buf)[1]
+    if winid then
+      render_session(session, winid)
+      rendered = true
     end
   end
-  vim.notify("dirdiff: setting saved for the next :DirDiff", vim.log.levels.INFO)
+  if not rendered then
+    vim.notify("dirdiff: setting saved for the next :DirDiff", vim.log.levels.INFO)
+  end
 end
 
 function M.toggle_separation()
@@ -99,19 +134,17 @@ function M.toggle_diff_first()
   end)
 end
 
--- Jumps focus to the window showing the last comparison's result list, if
--- it's still open. Used by the diff windows' goto-list keymap and by
+-- Jumps focus to the window showing the result list of the comparison in
+-- the current tab (else the most recent one), if it's still open. Used by
 -- :DirDiffGotoList.
 function M.goto_list()
-  if has_open_result_buffer() then
-    local winid = vim.fn.bufwinid(last_buf)
-    if winid ~= -1 then
-      vim.api.nvim_set_current_win(winid)
-    end
+  local session = default_session()
+  if session then
+    ui.goto_list(session.ui)
   end
 end
 
-local function compare(root_a, root_b)
+local function compare(session, root_a, root_b)
   if is_comparing then
     vim.notify("dirdiff: a scan is already in progress", vim.log.levels.INFO)
     return
@@ -130,7 +163,8 @@ local function compare(root_a, root_b)
   ui.setup_highlights(config.options.highlights)
 
   is_comparing = true
-  last = { root_a = root_a, root_b = root_b }
+  session.root_a = root_a
+  session.root_b = root_b
 
   local snap_a, snap_b
   local function try_render()
@@ -139,8 +173,8 @@ local function compare(root_a, root_b)
       -- rendering; is_comparing is released once verification completes.
       content.resolve(diff.compute(snap_a, snap_b, config.options.compare), config.options.compare, function(entries)
         is_comparing = false
-        last_entries = entries
-        render_current(target_list_window())
+        session.entries = entries
+        render_session(session, target_list_window(session))
       end)
     end
   end
@@ -165,14 +199,17 @@ function M.open(dir1, dir2)
     root_a = path.absolute(vim.fn.getcwd())
     root_b = path.absolute(dir1)
   end
-  compare(root_a, root_b)
+  compare(current_session() or { ui = ui.new_state() }, root_a, root_b)
 end
 
-function M.refresh()
-  if not last then
+-- Rescans the roots of `session` (default: the comparison in the current
+-- tab, else the most recent one) and re-renders it in place.
+function M.refresh(session)
+  session = session or default_session()
+  if not session then
     return
   end
-  compare(last.root_a, last.root_b)
+  compare(session, session.root_a, session.root_b)
 end
 
 return M
