@@ -23,7 +23,11 @@ local function segment_to_lua(seg)
   local i, n = 1, #seg
   while i <= n do
     local c = seg:sub(i, i)
-    if c == "*" then
+    if c == "\\" and i < n then -- backslash escapes the next character literally
+      local nc = seg:sub(i + 1, i + 1)
+      out[#out + 1] = MAGIC:find(nc, 1, true) and ("%" .. nc) or nc
+      i = i + 2
+    elseif c == "*" then
       out[#out + 1] = "[^/]*"
       i = i + 1
     elseif c == "?" then
