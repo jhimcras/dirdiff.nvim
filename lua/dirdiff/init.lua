@@ -144,7 +144,7 @@ function M.goto_list()
   end
 end
 
-local function compare(session, root_a, root_b)
+local function compare(session, root_a, root_b, refreshing)
   if is_comparing then
     vim.notify("dirdiff: a scan is already in progress", vim.log.levels.INFO)
     return
@@ -173,6 +173,10 @@ local function compare(session, root_a, root_b)
       -- rendering; is_comparing is released once verification completes.
       content.resolve(diff.compute(snap_a, snap_b, config.options.compare), config.options.compare, function(entries)
         is_comparing = false
+        -- A refresh whose list was closed meanwhile must not reopen it.
+        if refreshing and not session_open(session) then
+          return
+        end
         session.entries = entries
         render_session(session, target_list_window(session))
       end)
@@ -209,7 +213,7 @@ function M.refresh(session)
   if not session then
     return
   end
-  compare(session, session.root_a, session.root_b)
+  compare(session, session.root_a, session.root_b, true)
 end
 
 return M
