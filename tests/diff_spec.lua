@@ -82,4 +82,12 @@ describe("dirdiff.diff", function()
     assert.is_true(diff.compute(a, b, { ignore_encoding = true })[1].verify)
     assert.equals("modified", diff.compute(a, b, { ignore_newline = true })[1].status)
   end)
+
+  it("verifies same-second files whose sub-second mtime differs", function()
+    local a = { ["x.txt"] = { rel = "x.txt", abs = "/a/x.txt", size = 4, mtime = 5, mtime_nsec = 100 } }
+    local b = { ["x.txt"] = { rel = "x.txt", abs = "/b/x.txt", size = 4, mtime = 5, mtime_nsec = 900 } }
+    local e = diff.compute(a, b)[1]
+    assert.equals("modified", e.status)
+    assert.is_true(e.verify)
+  end)
 end)

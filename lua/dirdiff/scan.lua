@@ -89,6 +89,7 @@ function M.scan(root, opts, on_done)
       abs = abs,
       size = stat.size,
       mtime = stat.mtime.sec,
+      mtime_nsec = stat.mtime.nsec or 0,
     }
   end
 

@@ -111,6 +111,12 @@ local function compile_line(line)
   for _, raw in ipairs(vim.split(line, "/", { plain = true })) do
     segs[#segs + 1] = raw == "**" and "**" or segment_to_lua(raw)
   end
+  -- A trailing "**" matches everything inside, but not the directory itself
+  -- (git: `cache/**` leaves `!cache/keep.txt` able to re-include), so it must
+  -- consume at least one component.
+  if segs[#segs] == "**" then
+    segs[#segs + 1] = segment_to_lua("*")
+  end
 
   return { negate = negate, dir_only = dir_only, segs = segs }
 end

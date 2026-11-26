@@ -2,7 +2,8 @@
 --
 -- A snapshot is a table keyed by comparison key:
 --   snapshot[key] = { rel = <display path>, abs = <absolute path>,
---                     size = <bytes>, mtime = <seconds> }
+--                     size = <bytes>, mtime = <seconds>,
+--                     mtime_nsec = <sub-second part, optional> }
 --
 -- An entry is:
 --   { rel = <display path>, status = "added"|"deleted"|"modified"|"equal",
@@ -45,7 +46,7 @@ function M.compute(snap_a, snap_b, compare_opts)
         abs_b = b.abs,
         verify = normalize or nil,
       }
-    elseif a.mtime ~= b.mtime then
+    elseif a.mtime ~= b.mtime or (a.mtime_nsec or 0) ~= (b.mtime_nsec or 0) then
       entries[#entries + 1] = {
         rel = a.rel,
         status = "modified",
