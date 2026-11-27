@@ -6,3 +6,6 @@
 .claude/
 # local working handoff note (not part of the plugin)
 HANDOFF.md
+# find_bug history and local issues
+/.findbug/
+/.issues/
