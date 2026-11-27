@@ -146,6 +146,25 @@ describe("dirdiff.ui diff pane reuse", function()
     assert.same(first, second)
   end)
 
+  it("keeps diff mode on an unrelated diff window in the same tab when navigating", function()
+    local list_win, list_buf = open_dirdiff({
+      { rel = "one.txt", content_a = "hello a, a longer line for a", content_b = "hello b" },
+      { rel = "two.txt", content_a = "foo a, a longer line for a", content_b = "foo b" },
+    })
+
+    local unrelated_file = vim.fn.tempname()
+    vim.fn.writefile({ "unrelated" }, unrelated_file)
+    vim.cmd("vsplit " .. vim.fn.fnameescape(unrelated_file))
+    local unrelated_win = vim.api.nvim_get_current_win()
+    vim.cmd("diffthis")
+
+    press_enter_on(list_win, list_buf, "one.txt")
+    assert.is_true(vim.wo[unrelated_win].diff)
+
+    press_enter_on(list_win, list_buf, "two.txt")
+    assert.is_true(vim.wo[unrelated_win].diff)
+  end)
+
   it("closes and re-splits when the pane count changes (two-sided -> one-sided)", function()
     local list_win, list_buf = open_dirdiff({
       { rel = "one.txt", content_a = "hello a, a longer line for a", content_b = "hello b" },

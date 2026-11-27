@@ -305,7 +305,13 @@ end
 local function reuse_pair(state, wins, paths, goto_list_lhs)
   -- Restore mappings on the buffers about to leave the panes.
   unbind_goto(state)
-  vim.cmd("diffoff!")
+  -- Window-local `diffoff` on our panes only: `diffoff!` would also turn
+  -- off diff mode in unrelated windows of the same tab.
+  for _, win in ipairs(wins) do
+    vim.api.nvim_win_call(win, function()
+      vim.cmd("diffoff")
+    end)
+  end
   for i, win in ipairs(wins) do
     show_file(win, paths[i])
   end
