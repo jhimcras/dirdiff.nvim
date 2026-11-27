@@ -13,6 +13,11 @@ if vim.fn.isdirectory(plenary_dir) == 0 then
   })
 end
 
+-- Tests open real files with :split/:vsplit. Swap files would otherwise go to
+-- the user's $XDG_STATE_HOME/nvim/swap, and E303 aborts the split whenever that
+-- directory is not writable (sandboxed runs), failing ui_spec.
+vim.opt.swapfile = false
+
 vim.opt.runtimepath:append(cwd)
 vim.opt.runtimepath:append(plenary_dir)
 
