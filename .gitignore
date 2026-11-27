@@ -9,3 +9,5 @@ HANDOFF.md
 # find_bug history and local issues
 /.findbug/
 /.issues/
+# neovim log
+nvim.log
